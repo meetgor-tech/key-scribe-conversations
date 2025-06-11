@@ -49,9 +49,9 @@ export function ChatMessage({ message, onCopy, onFeedback }: ChatMessageProps) {
           "rounded-lg px-4 py-3 break-words",
           isUser 
             ? "bg-blue-600 text-white ml-auto" 
-            : "bg-slate-800/50 text-slate-100"
+            : "bg-slate-800/50 text-slate-100 border border-slate-700/50"
         )}>
-          <div className="whitespace-pre-wrap">
+          <div className="whitespace-pre-wrap leading-relaxed">
             {message.content}
             {message.isStreaming && (
               <span className="inline-block w-2 h-5 bg-current animate-pulse ml-1" />
@@ -61,7 +61,7 @@ export function ChatMessage({ message, onCopy, onFeedback }: ChatMessageProps) {
 
         {/* Message Actions */}
         {!isUser && !message.isStreaming && (
-          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <Button
               variant="ghost"
               size="sm"
