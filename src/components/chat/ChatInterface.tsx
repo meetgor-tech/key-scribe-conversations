@@ -11,6 +11,8 @@ import { useToast } from "@/hooks/use-toast";
 interface ChatInterfaceProps {
   selectedModel: string;
   selectedProvider: string;
+  currentThreadId?: string;
+  onThreadCreated?: (threadId: string) => void;
 }
 
 interface Message {
@@ -21,17 +23,25 @@ interface Message {
   isStreaming?: boolean;
 }
 
-export function ChatInterface({ selectedModel, selectedProvider }: ChatInterfaceProps) {
+const API_BASE_URL = "http://localhost:8000"; // Change this to your backend URL
+
+export function ChatInterface({ selectedModel, selectedProvider, currentThreadId, onThreadCreated }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [threadId, setThreadId] = useState<string | undefined>(currentThreadId);
+  const [apiKeys, setApiKeys] = useState<any[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // Mock API key status - in real app this would come from your API key store
-  const hasApiKey = true; // This should be determined by checking if user has API key for selectedProvider
-  const apiKeyName = hasApiKey ? `${selectedProvider}-prod-key` : null;
+  // Get auth token from localStorage
+  const getAuthToken = () => localStorage.getItem('authToken');
+
+  // Check if user has API key for selected provider and model
+  const currentApiKey = apiKeys.find(key => 
+    key.provider === selectedProvider && key.model_name === selectedModel
+  );
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -41,14 +51,83 @@ export function ChatInterface({ selectedModel, selectedProvider }: ChatInterface
     scrollToBottom();
   }, [messages]);
 
+  // Load API keys on mount
+  useEffect(() => {
+    loadApiKeys();
+  }, []);
+
+  // Load thread messages when threadId changes
+  useEffect(() => {
+    if (currentThreadId && currentThreadId !== threadId) {
+      setThreadId(currentThreadId);
+      loadThreadMessages(currentThreadId);
+    }
+  }, [currentThreadId]);
+
+  const loadApiKeys = async () => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api-keys`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const keys = await response.json();
+        setApiKeys(keys);
+      }
+    } catch (error) {
+      console.error('Failed to load API keys:', error);
+    }
+  };
+
+  const loadThreadMessages = async (id: string) => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/threads/${id}/messages`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const threadMessages = await response.json();
+        const formattedMessages = threadMessages.map((msg: any) => ({
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.created_at),
+        }));
+        setMessages(formattedMessages);
+      }
+    } catch (error) {
+      console.error('Failed to load thread messages:', error);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    if (!hasApiKey) {
+    const token = getAuthToken();
+    if (!token) {
+      toast({ 
+        title: "Authentication Required", 
+        description: "Please log in to continue.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (!currentApiKey) {
       toast({ 
         title: "API Key Required", 
-        description: `Please add an API key for ${selectedProvider} to continue.`,
+        description: `Please add an API key for ${selectedProvider} ${selectedModel} to continue.`,
         variant: "destructive"
       });
       return;
@@ -65,7 +144,7 @@ export function ChatInterface({ selectedModel, selectedProvider }: ChatInterface
     setInput("");
     setIsLoading(true);
 
-    // Simulate streaming response
+    // Create streaming assistant message
     const assistantMessage: Message = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
@@ -76,30 +155,89 @@ export function ChatInterface({ selectedModel, selectedProvider }: ChatInterface
 
     setMessages(prev => [...prev, assistantMessage]);
 
-    // Simulate streaming text
-    const responseText = `I understand you're asking about "${userMessage.content}". This is a simulated response using ${selectedModel} from ${selectedProvider}. In a real implementation, this would connect to your Python backend API that handles the actual AI model requests using your stored API keys.
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: userMessage.content,
+          thread_id: threadId,
+          provider: selectedProvider,
+          model_name: selectedModel,
+          stream: true,
+        }),
+      });
 
-This interface supports streaming responses, so you'd see the text appear character by character as it's generated. The clean, minimal design ensures a distraction-free conversation experience.`;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-    let currentText = "";
-    for (let i = 0; i < responseText.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      currentText += responseText[i];
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
       
-      setMessages(prev => prev.map(msg => 
-        msg.id === assistantMessage.id 
-          ? { ...msg, content: currentText }
-          : msg
-      ));
+      if (reader) {
+        let responseContent = "";
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                if (data.content) {
+                  responseContent += data.content;
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === assistantMessage.id 
+                      ? { ...msg, content: responseContent }
+                      : msg
+                  ));
+                }
+                
+                if (data.done) {
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === assistantMessage.id 
+                      ? { ...msg, isStreaming: false }
+                      : msg
+                  ));
+                  
+                  if (data.thread_id && !threadId) {
+                    setThreadId(data.thread_id);
+                    onThreadCreated?.(data.thread_id);
+                  }
+                }
+                
+                if (data.error) {
+                  throw new Error(data.error);
+                }
+              } catch (parseError) {
+                console.error('Error parsing SSE data:', parseError);
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      toast({
+        title: "Chat Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive"
+      });
+      
+      // Remove the failed assistant message
+      setMessages(prev => prev.filter(msg => msg.id !== assistantMessage.id));
+    } finally {
+      setIsLoading(false);
     }
-
-    setMessages(prev => prev.map(msg => 
-      msg.id === assistantMessage.id 
-        ? { ...msg, isStreaming: false }
-        : msg
-    ));
-    
-    setIsLoading(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -123,10 +261,10 @@ This interface supports streaming responses, so you'd see the text appear charac
               <Badge variant="outline" className="text-xs border-slate-600 text-slate-300">
                 {selectedModel}
               </Badge>
-              {hasApiKey && apiKeyName ? (
+              {currentApiKey ? (
                 <Badge variant="outline" className="text-xs border-green-600 text-green-400 bg-green-950/30">
                   <Key className="w-3 h-3 mr-1" />
-                  {apiKeyName}
+                  {currentApiKey.key_name}
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-xs border-red-600 text-red-400 bg-red-950/30">
@@ -152,10 +290,10 @@ This interface supports streaming responses, so you'd see the text appear charac
                 <p className="text-slate-400 max-w-md mb-4">
                   Ask me anything! I'm powered by your own API keys and can use any model you've configured.
                 </p>
-                {!hasApiKey && (
+                {!currentApiKey && (
                   <div className="flex items-center gap-2 text-amber-400 text-sm">
                     <AlertCircle className="w-4 h-4" />
-                    <span>Add an API key for {selectedProvider} to get started</span>
+                    <span>Add an API key for {selectedProvider} {selectedModel} to get started</span>
                   </div>
                 )}
               </div>
@@ -189,14 +327,14 @@ This interface supports streaming responses, so you'd see the text appear charac
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={hasApiKey ? "Type your message... (Press Enter to send, Shift+Enter for new line)" : `Add an API key for ${selectedProvider} to start chatting`}
+            placeholder={currentApiKey ? "Type your message... (Press Enter to send, Shift+Enter for new line)" : `Add an API key for ${selectedProvider} ${selectedModel} to start chatting`}
             className="w-full min-h-[60px] max-h-[120px] resize-none bg-slate-800/50 border-slate-600 text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12"
-            disabled={isLoading || !hasApiKey}
+            disabled={isLoading || !currentApiKey}
           />
           <Button
             type="submit"
             size="sm"
-            disabled={!input.trim() || isLoading || !hasApiKey}
+            disabled={!input.trim() || isLoading || !currentApiKey}
             className="absolute right-2 bottom-2 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
           >
             {isLoading ? (
@@ -208,8 +346,8 @@ This interface supports streaming responses, so you'd see the text appear charac
         </form>
         
         <div className="mt-2 text-xs text-slate-500 text-center">
-          {hasApiKey ? (
-            <>Using {selectedModel} from {selectedProvider} • API Key: {apiKeyName}</>
+          {currentApiKey ? (
+            <>Using {selectedModel} from {selectedProvider} • API Key: {currentApiKey.key_name}</>
           ) : (
             <>Configure your API keys to start using {selectedModel} from {selectedProvider}</>
           )}

@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -9,9 +9,11 @@ import {
   Plus, 
   Key,
   ChevronDown,
-  Sparkles
+  Sparkles,
+  LogOut
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 interface SidebarProps {
   activeView: 'chat' | 'api-keys';
@@ -20,6 +22,19 @@ interface SidebarProps {
   selectedProvider: string;
   onModelChange: (model: string) => void;
   onProviderChange: (provider: string) => void;
+  onThreadSelect?: (threadId: string) => void;
+  onNewChat?: () => void;
+  onLogout?: () => void;
+  currentUser?: any;
+}
+
+interface Thread {
+  id: string;
+  title: string;
+  provider: string;
+  model_name: string;
+  created_at: string;
+  updated_at: string;
 }
 
 const providers = [
@@ -29,19 +44,77 @@ const providers = [
   { id: 'cohere', name: 'Cohere', models: ['command', 'command-light'] },
 ];
 
+const API_BASE_URL = "http://localhost:8000";
+
 export function Sidebar({ 
   activeView, 
   onViewChange, 
   selectedModel, 
   selectedProvider,
   onModelChange,
-  onProviderChange 
+  onProviderChange,
+  onThreadSelect,
+  onNewChat,
+  onLogout,
+  currentUser
 }: SidebarProps) {
-  const [conversations] = useState([
-    { id: 1, title: "AI Assistant Help", timestamp: "2 min ago", model: "gpt-4" },
-    { id: 2, title: "Code Review Discussion", timestamp: "1 hour ago", model: "claude-3-opus" },
-    { id: 3, title: "Creative Writing", timestamp: "Yesterday", model: "gpt-4-turbo" },
-  ]);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+
+  const getAuthToken = () => localStorage.getItem('authToken');
+
+  useEffect(() => {
+    if (activeView === 'chat') {
+      loadThreads();
+    }
+  }, [activeView]);
+
+  const loadThreads = async () => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/threads`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const threadsData = await response.json();
+        setThreads(threadsData);
+      }
+    } catch (error) {
+      console.error('Failed to load threads:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleNewChat = () => {
+    onNewChat?.();
+  };
+
+  const handleThreadSelect = (threadId: string) => {
+    onThreadSelect?.(threadId);
+  };
+
+  const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
 
   return (
     <aside className="w-80 bg-slate-900/50 backdrop-blur-xl border-r border-slate-700/50 flex flex-col">
@@ -51,12 +124,27 @@ export function Sidebar({
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <Sparkles className="w-4 h-4 text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white">BYOK Chat</h1>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-white">BYOK Chat</h1>
+            {currentUser && (
+              <p className="text-xs text-slate-400">{currentUser.email}</p>
+            )}
+          </div>
+          {onLogout && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onLogout}
+              className="text-slate-400 hover:text-white p-2"
+            >
+              <LogOut className="w-4 h-4" />
+            </Button>
+          )}
         </div>
         
         <Button 
           className="w-full bg-blue-600 hover:bg-blue-700 text-white border-0"
-          onClick={() => console.log('New chat')}
+          onClick={handleNewChat}
         >
           <Plus className="w-4 h-4 mr-2" />
           New Chat
@@ -140,26 +228,38 @@ export function Sidebar({
               <h3 className="text-xs font-medium text-slate-400 mb-3">Recent Conversations</h3>
             </div>
             <ScrollArea className="flex-1 px-4">
-              <div className="space-y-2">
-                {conversations.map((conv) => (
-                  <div
-                    key={conv.id}
-                    className="p-3 rounded-lg bg-slate-800/30 hover:bg-slate-700/30 transition-colors cursor-pointer group"
-                  >
-                    <div className="flex items-start justify-between mb-1">
-                      <h4 className="text-sm font-medium text-white truncate flex-1">
-                        {conv.title}
-                      </h4>
+              {loading ? (
+                <div className="text-center text-slate-400 py-4">Loading...</div>
+              ) : (
+                <div className="space-y-2">
+                  {threads.map((thread) => (
+                    <div
+                      key={thread.id}
+                      className="p-3 rounded-lg bg-slate-800/30 hover:bg-slate-700/30 transition-colors cursor-pointer group"
+                      onClick={() => handleThreadSelect(thread.id)}
+                    >
+                      <div className="flex items-start justify-between mb-1">
+                        <h4 className="text-sm font-medium text-white truncate flex-1">
+                          {thread.title}
+                        </h4>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400">{formatTimeAgo(thread.updated_at)}</span>
+                        <Badge variant="secondary" className="text-xs bg-slate-700/50 text-slate-300">
+                          {thread.model_name}
+                        </Badge>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">{conv.timestamp}</span>
-                      <Badge variant="secondary" className="text-xs bg-slate-700/50 text-slate-300">
-                        {conv.model}
-                      </Badge>
+                  ))}
+                  {threads.length === 0 && !loading && (
+                    <div className="text-center text-slate-500 py-8">
+                      <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No conversations yet</p>
+                      <p className="text-xs">Start a new chat to begin</p>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  )}
+                </div>
+              )}
             </ScrollArea>
           </div>
         </>

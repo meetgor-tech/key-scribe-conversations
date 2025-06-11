@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,11 +12,10 @@ import { useToast } from "@/hooks/use-toast";
 interface ApiKey {
   id: string;
   provider: string;
-  name: string;
-  key: string;
-  status: 'active' | 'inactive' | 'error';
-  createdAt: Date;
-  lastUsed?: Date;
+  model_name: string;
+  key_name: string;
+  is_active: boolean;
+  created_at: string;
 }
 
 const providers = [
@@ -24,59 +23,91 @@ const providers = [
     id: 'openai', 
     name: 'OpenAI', 
     color: 'bg-green-500',
-    description: 'GPT-4, GPT-3.5-turbo, and other OpenAI models'
+    description: 'GPT-4, GPT-3.5-turbo, and other OpenAI models',
+    models: ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo']
   },
   { 
     id: 'anthropic', 
     name: 'Anthropic', 
     color: 'bg-orange-500',
-    description: 'Claude 3 Opus, Sonnet, and Haiku models'
+    description: 'Claude 3 Opus, Sonnet, and Haiku models',
+    models: ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku']
   },
   { 
     id: 'google', 
     name: 'Google', 
     color: 'bg-blue-500',
-    description: 'Gemini Pro and Gemini Pro Vision'
+    description: 'Gemini Pro and Gemini Pro Vision',
+    models: ['gemini-pro', 'gemini-pro-vision']
   },
   { 
     id: 'cohere', 
     name: 'Cohere', 
     color: 'bg-purple-500',
-    description: 'Command and Command Light models'
+    description: 'Command and Command Light models',
+    models: ['command', 'command-light']
   },
 ];
 
+const API_BASE_URL = "http://localhost:8000"; // Change this to your backend URL
+
 export function ApiKeyManager() {
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([
-    {
-      id: '1',
-      provider: 'openai',
-      name: 'Main OpenAI Key',
-      key: 'sk-1234567890abcdef...',
-      status: 'active',
-      createdAt: new Date('2024-01-15'),
-      lastUsed: new Date('2024-01-20'),
-    },
-    {
-      id: '2',
-      provider: 'anthropic',
-      name: 'Claude API Key',
-      key: 'sk-ant-api03-...',
-      status: 'active',
-      createdAt: new Date('2024-01-10'),
-      lastUsed: new Date('2024-01-19'),
-    },
-  ]);
-  
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
   const [keyName, setKeyName] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
   const { toast } = useToast();
 
-  const handleAddKey = () => {
-    if (!selectedProvider || !keyName || !apiKey) {
+  // Get auth token from localStorage
+  const getAuthToken = () => localStorage.getItem('authToken');
+
+  useEffect(() => {
+    loadApiKeys();
+  }, []);
+
+  const loadApiKeys = async () => {
+    const token = getAuthToken();
+    if (!token) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to manage API keys",
+        variant: "destructive"
+      });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api-keys`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const keys = await response.json();
+        setApiKeys(keys);
+      } else {
+        throw new Error('Failed to load API keys');
+      }
+    } catch (error) {
+      console.error('Error loading API keys:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load API keys",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddKey = async () => {
+    if (!selectedProvider || !selectedModel || !keyName || !apiKey) {
       toast({
         title: "Missing fields",
         description: "Please fill in all required fields",
@@ -85,51 +116,110 @@ export function ApiKeyManager() {
       return;
     }
 
-    const newKey: ApiKey = {
-      id: Date.now().toString(),
-      provider: selectedProvider,
-      name: keyName,
-      key: apiKey,
-      status: 'active',
-      createdAt: new Date(),
-    };
+    const token = getAuthToken();
+    if (!token) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to add API keys",
+        variant: "destructive"
+      });
+      return;
+    }
 
-    setApiKeys(prev => [...prev, newKey]);
-    setShowForm(false);
-    setSelectedProvider('');
-    setKeyName('');
-    setApiKey('');
-    
-    toast({
-      title: "API key added",
-      description: "Your API key has been securely stored",
-    });
-  };
+    setSubmitting(true);
 
-  const toggleKeyVisibility = (keyId: string) => {
-    setVisibleKeys(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(keyId)) {
-        newSet.delete(keyId);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api-keys`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider: selectedProvider,
+          model_name: selectedModel,
+          api_key: apiKey,
+          key_name: keyName,
+        }),
+      });
+
+      if (response.ok) {
+        const newKey = await response.json();
+        setApiKeys(prev => [...prev, newKey]);
+        setShowForm(false);
+        setSelectedProvider('');
+        setSelectedModel('');
+        setKeyName('');
+        setApiKey('');
+        
+        toast({
+          title: "API key added",
+          description: "Your API key has been securely stored",
+        });
       } else {
-        newSet.add(keyId);
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to add API key');
       }
-      return newSet;
-    });
+    } catch (error) {
+      console.error('Error adding API key:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to add API key",
+        variant: "destructive"
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const deleteKey = (keyId: string) => {
-    setApiKeys(prev => prev.filter(key => key.id !== keyId));
-    toast({
-      title: "API key deleted",
-      description: "The API key has been removed",
-    });
+  const deleteKey = async (keyId: string) => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api-keys/${keyId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        setApiKeys(prev => prev.filter(key => key.id !== keyId));
+        toast({
+          title: "API key deleted",
+          description: "The API key has been removed",
+        });
+      } else {
+        throw new Error('Failed to delete API key');
+      }
+    } catch (error) {
+      console.error('Error deleting API key:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete API key",
+        variant: "destructive"
+      });
+    }
   };
 
-  const maskKey = (key: string) => {
-    if (key.length < 8) return key;
-    return key.slice(0, 8) + '...' + key.slice(-4);
+  const handleProviderChange = (providerId: string) => {
+    setSelectedProvider(providerId);
+    const provider = providers.find(p => p.id === providerId);
+    if (provider && provider.models.length > 0) {
+      setSelectedModel(provider.models[0]);
+    } else {
+      setSelectedModel('');
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-white">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -167,7 +257,7 @@ export function ApiKeyManager() {
                   <select
                     id="provider"
                     value={selectedProvider}
-                    onChange={(e) => setSelectedProvider(e.target.value)}
+                    onChange={(e) => handleProviderChange(e.target.value)}
                     className="w-full mt-1 bg-slate-700 border-slate-600 text-white rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">Select a provider...</option>
@@ -178,6 +268,24 @@ export function ApiKeyManager() {
                     ))}
                   </select>
                 </div>
+
+                {selectedProvider && (
+                  <div>
+                    <Label htmlFor="model" className="text-slate-300">Model</Label>
+                    <select
+                      id="model"
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      className="w-full mt-1 bg-slate-700 border-slate-600 text-white rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                    >
+                      {providers.find(p => p.id === selectedProvider)?.models.map(model => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 
                 <div>
                   <Label htmlFor="keyName" className="text-slate-300">Key Name</Label>
@@ -203,9 +311,13 @@ export function ApiKeyManager() {
                 </div>
                 
                 <div className="flex gap-3 pt-4">
-                  <Button onClick={handleAddKey} className="bg-blue-600 hover:bg-blue-700">
+                  <Button 
+                    onClick={handleAddKey} 
+                    disabled={submitting}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
                     <Key className="w-4 h-4 mr-2" />
-                    Add Key
+                    {submitting ? 'Adding...' : 'Add Key'}
                   </Button>
                   <Button 
                     variant="outline" 
@@ -249,7 +361,6 @@ export function ApiKeyManager() {
             <div className="space-y-3">
               {apiKeys.map(key => {
                 const provider = providers.find(p => p.id === key.provider);
-                const isVisible = visibleKeys.has(key.id);
                 
                 return (
                   <Card key={key.id} className="bg-slate-800/30 border-slate-700">
@@ -258,41 +369,24 @@ export function ApiKeyManager() {
                         <div className="flex items-center gap-3">
                           <div className={`w-3 h-3 rounded-full ${provider?.color}`} />
                           <div>
-                            <h4 className="font-medium text-white">{key.name}</h4>
-                            <p className="text-sm text-slate-400">{provider?.name}</p>
+                            <h4 className="font-medium text-white">{key.key_name}</h4>
+                            <p className="text-sm text-slate-400">{provider?.name} • {key.model_name}</p>
                           </div>
                         </div>
                         
                         <div className="flex items-center gap-2">
                           <Badge 
-                            variant={key.status === 'active' ? 'default' : 'destructive'}
+                            variant={key.is_active ? 'default' : 'destructive'}
                             className={
-                              key.status === 'active' 
+                              key.is_active 
                                 ? "bg-green-600 text-white" 
                                 : "bg-red-600 text-white"
                             }
                           >
-                            {key.status === 'active' && <Check className="w-3 h-3 mr-1" />}
-                            {key.status === 'error' && <AlertCircle className="w-3 h-3 mr-1" />}
-                            {key.status}
+                            {key.is_active && <Check className="w-3 h-3 mr-1" />}
+                            {!key.is_active && <AlertCircle className="w-3 h-3 mr-1" />}
+                            {key.is_active ? 'active' : 'inactive'}
                           </Badge>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-3 flex items-center justify-between">
-                        <code className="text-sm bg-slate-900/50 px-3 py-1 rounded text-slate-300 font-mono">
-                          {isVisible ? key.key : maskKey(key.key)}
-                        </code>
-                        
-                        <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleKeyVisibility(key.id)}
-                            className="text-slate-400 hover:text-white"
-                          >
-                            {isVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -304,11 +398,9 @@ export function ApiKeyManager() {
                         </div>
                       </div>
                       
-                      {key.lastUsed && (
-                        <p className="text-xs text-slate-500 mt-2">
-                          Last used: {key.lastUsed.toLocaleDateString()}
-                        </p>
-                      )}
+                      <p className="text-xs text-slate-500 mt-2">
+                        Created: {new Date(key.created_at).toLocaleDateString()}
+                      </p>
                     </CardContent>
                   </Card>
                 );
