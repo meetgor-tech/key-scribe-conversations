@@ -37,12 +37,10 @@ interface Thread {
   updated_at: string;
 }
 
-const providers = [
-  { id: 'openai', name: 'OpenAI', models: ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'] },
-  { id: 'anthropic', name: 'Anthropic', models: ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku'] },
-  { id: 'google', name: 'Google', models: ['gemini-pro', 'gemini-pro-vision'] },
-  { id: 'cohere', name: 'Cohere', models: ['command', 'command-light'] },
-];
+interface Provider {
+  id: string;
+  name: string;
+}
 
 const API_BASE_URL = "http://localhost:8000";
 
@@ -59,16 +57,54 @@ export function Sidebar({
   currentUser
 }: SidebarProps) {
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
+  const [providersLoading, setProvidersLoading] = useState(true);
   const { toast } = useToast();
 
   const getAuthToken = () => localStorage.getItem('authToken');
+
+  useEffect(() => {
+    loadProvidersAndModels();
+  }, []);
 
   useEffect(() => {
     if (activeView === 'chat') {
       loadThreads();
     }
   }, [activeView]);
+
+  const loadProvidersAndModels = async () => {
+    setProvidersLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/providers-and-models`);
+      if (response.ok) {
+        const data = await response.json();
+        setProviders(data.providers);
+        setModelsByProvider(data.models_by_provider);
+        
+        // Set default provider and model if none selected
+        if (!selectedProvider && data.providers.length > 0) {
+          const firstProvider = data.providers[0].id;
+          onProviderChange(firstProvider);
+          const firstModel = data.models_by_provider[firstProvider]?.[0];
+          if (firstModel) {
+            onModelChange(firstModel);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load providers and models:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load AI providers and models",
+        variant: "destructive"
+      });
+    } finally {
+      setProvidersLoading(false);
+    }
+  };
 
   const loadThreads = async () => {
     const token = getAuthToken();
@@ -101,6 +137,14 @@ export function Sidebar({
     onThreadSelect?.(threadId);
   };
 
+  const handleProviderChange = (providerId: string) => {
+    onProviderChange(providerId);
+    const availableModels = modelsByProvider[providerId] || [];
+    if (availableModels.length > 0) {
+      onModelChange(availableModels[0]);
+    }
+  };
+
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -115,6 +159,8 @@ export function Sidebar({
     if (diffDays < 7) return `${diffDays}d ago`;
     return date.toLocaleDateString();
   };
+
+  const currentProviderModels = modelsByProvider[selectedProvider] || [];
 
   return (
     <aside className="w-80 bg-slate-900/50 backdrop-blur-xl border-r border-slate-700/50 flex flex-col">
@@ -192,34 +238,39 @@ export function Sidebar({
             <label className="text-xs font-medium text-slate-400 mb-2 block">
               Model Selection
             </label>
-            <div className="space-y-2">
-              <select 
-                value={selectedProvider}
-                onChange={(e) => {
-                  onProviderChange(e.target.value);
-                  const provider = providers.find(p => p.id === e.target.value);
-                  if (provider) onModelChange(provider.models[0]);
-                }}
-                className="w-full bg-slate-800/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                {providers.map(provider => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.name}
-                  </option>
-                ))}
-              </select>
-              <select 
-                value={selectedModel}
-                onChange={(e) => onModelChange(e.target.value)}
-                className="w-full bg-slate-800/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                {providers.find(p => p.id === selectedProvider)?.models.map(model => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {providersLoading ? (
+              <div className="text-center text-slate-400 py-4">Loading providers...</div>
+            ) : (
+              <div className="space-y-2">
+                <select 
+                  value={selectedProvider}
+                  onChange={(e) => handleProviderChange(e.target.value)}
+                  className="w-full bg-slate-800/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={providersLoading}
+                >
+                  {providers.map(provider => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+                <select 
+                  value={selectedModel}
+                  onChange={(e) => onModelChange(e.target.value)}
+                  className="w-full bg-slate-800/50 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={currentProviderModels.length === 0}
+                >
+                  {currentProviderModels.map(model => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+                {currentProviderModels.length === 0 && selectedProvider && (
+                  <p className="text-xs text-amber-400">No models available for this provider</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Conversations */}

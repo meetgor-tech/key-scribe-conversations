@@ -18,42 +18,19 @@ interface ApiKey {
   created_at: string;
 }
 
-const providers = [
-  { 
-    id: 'openai', 
-    name: 'OpenAI', 
-    color: 'bg-green-500',
-    description: 'GPT-4, GPT-3.5-turbo, and other OpenAI models',
-    models: ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo']
-  },
-  { 
-    id: 'anthropic', 
-    name: 'Anthropic', 
-    color: 'bg-orange-500',
-    description: 'Claude 3 Opus, Sonnet, and Haiku models',
-    models: ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku']
-  },
-  { 
-    id: 'google', 
-    name: 'Google', 
-    color: 'bg-blue-500',
-    description: 'Gemini Pro and Gemini Pro Vision',
-    models: ['gemini-pro', 'gemini-pro-vision']
-  },
-  { 
-    id: 'cohere', 
-    name: 'Cohere', 
-    color: 'bg-purple-500',
-    description: 'Command and Command Light models',
-    models: ['command', 'command-light']
-  },
-];
+interface Provider {
+  id: string;
+  name: string;
+}
 
-const API_BASE_URL = "http://localhost:8000"; // Change this to your backend URL
+const API_BASE_URL = "http://localhost:8000";
 
 export function ApiKeyManager() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
+  const [providersLoading, setProvidersLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
@@ -66,8 +43,32 @@ export function ApiKeyManager() {
   const getAuthToken = () => localStorage.getItem('authToken');
 
   useEffect(() => {
+    loadProvidersAndModels();
     loadApiKeys();
   }, []);
+
+  const loadProvidersAndModels = async () => {
+    setProvidersLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/providers-and-models`);
+      if (response.ok) {
+        const data = await response.json();
+        setProviders(data.providers);
+        setModelsByProvider(data.models_by_provider);
+      } else {
+        throw new Error('Failed to load providers and models');
+      }
+    } catch (error) {
+      console.error('Error loading providers and models:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load available providers and models",
+        variant: "destructive"
+      });
+    } finally {
+      setProvidersLoading(false);
+    }
+  };
 
   const loadApiKeys = async () => {
     const token = getAuthToken();
@@ -205,15 +206,46 @@ export function ApiKeyManager() {
 
   const handleProviderChange = (providerId: string) => {
     setSelectedProvider(providerId);
-    const provider = providers.find(p => p.id === providerId);
-    if (provider && provider.models.length > 0) {
-      setSelectedModel(provider.models[0]);
+    const availableModels = modelsByProvider[providerId] || [];
+    if (availableModels.length > 0) {
+      setSelectedModel(availableModels[0]);
     } else {
       setSelectedModel('');
     }
   };
 
-  if (loading) {
+  const getProviderDisplayName = (providerId: string) => {
+    const provider = providers.find(p => p.id === providerId);
+    return provider ? provider.name : providerId;
+  };
+
+  const getProviderColor = (providerId: string) => {
+    const colors: Record<string, string> = {
+      'openai': 'bg-green-500',
+      'anthropic': 'bg-orange-500',
+      'google': 'bg-blue-500',
+      'cohere': 'bg-purple-500',
+      'huggingface': 'bg-yellow-500',
+      'azure': 'bg-blue-600',
+      'bedrock': 'bg-orange-600',
+      'vertex_ai': 'bg-blue-400',
+      'palm': 'bg-green-400',
+      'mistral': 'bg-red-500',
+      'together_ai': 'bg-indigo-500',
+      'openrouter': 'bg-pink-500',
+      'replicate': 'bg-gray-500',
+      'anyscale': 'bg-teal-500',
+      'perplexity': 'bg-cyan-500',
+      'groq': 'bg-lime-500',
+      'deepinfra': 'bg-violet-500',
+      'ai21': 'bg-blue-700',
+      'nlp_cloud': 'bg-emerald-500',
+      'aleph_alpha': 'bg-rose-500',
+    };
+    return colors[providerId] || 'bg-slate-500';
+  };
+
+  if (loading || providersLoading) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-white">Loading...</div>
@@ -278,12 +310,15 @@ export function ApiKeyManager() {
                       onChange={(e) => setSelectedModel(e.target.value)}
                       className="w-full mt-1 bg-slate-700 border-slate-600 text-white rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
                     >
-                      {providers.find(p => p.id === selectedProvider)?.models.map(model => (
+                      {(modelsByProvider[selectedProvider] || []).map(model => (
                         <option key={model} value={model}>
                           {model}
                         </option>
                       ))}
                     </select>
+                    {(modelsByProvider[selectedProvider] || []).length === 0 && (
+                      <p className="text-xs text-amber-400 mt-1">No models available for this provider</p>
+                    )}
                   </div>
                 )}
                 
@@ -313,7 +348,7 @@ export function ApiKeyManager() {
                 <div className="flex gap-3 pt-4">
                   <Button 
                     onClick={handleAddKey} 
-                    disabled={submitting}
+                    disabled={submitting || !selectedProvider || !selectedModel}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     <Key className="w-4 h-4 mr-2" />
@@ -337,17 +372,18 @@ export function ApiKeyManager() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {providers.map(provider => {
                 const providerKeys = apiKeys.filter(key => key.provider === provider.id);
+                const modelCount = modelsByProvider[provider.id]?.length || 0;
                 return (
                   <Card key={provider.id} className="bg-slate-800/30 border-slate-700">
                     <CardContent className="p-4">
                       <div className="flex items-center gap-3 mb-2">
-                        <div className={`w-3 h-3 rounded-full ${provider.color}`} />
+                        <div className={`w-3 h-3 rounded-full ${getProviderColor(provider.id)}`} />
                         <h4 className="font-medium text-white">{provider.name}</h4>
                         <Badge variant="secondary" className="ml-auto bg-slate-700 text-slate-300">
                           {providerKeys.length} key{providerKeys.length !== 1 ? 's' : ''}
                         </Badge>
                       </div>
-                      <p className="text-sm text-slate-400">{provider.description}</p>
+                      <p className="text-sm text-slate-400">{modelCount} models available</p>
                     </CardContent>
                   </Card>
                 );
@@ -360,17 +396,17 @@ export function ApiKeyManager() {
             <h3 className="text-lg font-medium text-white mb-4">Your API Keys</h3>
             <div className="space-y-3">
               {apiKeys.map(key => {
-                const provider = providers.find(p => p.id === key.provider);
+                const providerDisplayName = getProviderDisplayName(key.provider);
                 
                 return (
                   <Card key={key.id} className="bg-slate-800/30 border-slate-700">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className={`w-3 h-3 rounded-full ${provider?.color}`} />
+                          <div className={`w-3 h-3 rounded-full ${getProviderColor(key.provider)}`} />
                           <div>
                             <h4 className="font-medium text-white">{key.key_name}</h4>
-                            <p className="text-sm text-slate-400">{provider?.name} • {key.model_name}</p>
+                            <p className="text-sm text-slate-400">{providerDisplayName} • {key.model_name}</p>
                           </div>
                         </div>
                         
