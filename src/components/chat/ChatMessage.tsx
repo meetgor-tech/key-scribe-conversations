@@ -1,8 +1,9 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Copy, ThumbsUp, ThumbsDown, User, Bot, RefreshCw, Shuffle } from "lucide-react";
+import { Copy, ThumbsUp, ThumbsDown, User, Bot, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ModelSelectionPopover } from "./ModelSelectionPopover";
 
 interface Message {
   id: string;
@@ -19,8 +20,10 @@ interface ChatMessageProps {
   onCopy: () => void;
   onFeedback: (type: 'up' | 'down') => void;
   onRetry?: () => void;
-  onRetryWithDifferentModel?: () => void;
+  onRetryWithDifferentModel?: (provider: string, model: string) => void;
   isLoading?: boolean;
+  currentProvider?: string;
+  currentModel?: string;
 }
 
 export function ChatMessage({ 
@@ -29,9 +32,15 @@ export function ChatMessage({
   onFeedback, 
   onRetry, 
   onRetryWithDifferentModel,
-  isLoading 
+  isLoading,
+  currentProvider = 'openai',
+  currentModel = 'gpt-4'
 }: ChatMessageProps) {
   const isUser = message.role === 'user';
+
+  const handleModelSelect = (provider: string, model: string) => {
+    onRetryWithDifferentModel?.(provider, model);
+  };
 
   return (
     <div className={cn(
@@ -142,15 +151,12 @@ export function ChatMessage({
                     </Button>
                   )}
                   {onRetryWithDifferentModel && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={onRetryWithDifferentModel}
+                    <ModelSelectionPopover
+                      currentProvider={currentProvider}
+                      currentModel={currentModel}
+                      onModelSelect={handleModelSelect}
                       disabled={isLoading}
-                      className="h-7 px-2 text-slate-400 hover:text-purple-400 hover:bg-slate-700/50"
-                    >
-                      <Shuffle className="w-3 h-3" />
-                    </Button>
+                    />
                   )}
                 </>
               )}
