@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Send, Square, Key, AlertCircle } from "lucide-react";
+import { Send, Square, Key, AlertCircle, RefreshCw, Shuffle } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
 
@@ -13,6 +13,8 @@ interface ChatInterfaceProps {
   selectedProvider: string;
   currentThreadId?: string;
   onThreadCreated?: (threadId: string) => void;
+  onModelChange: (model: string) => void;
+  onProviderChange: (provider: string) => void;
 }
 
 interface Message {
@@ -21,24 +23,33 @@ interface Message {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
+  model?: string;
+  provider?: string;
 }
 
-const API_BASE_URL = "http://localhost:8000"; // Change this to your backend URL
+const API_BASE_URL = "http://localhost:8000";
 
-export function ChatInterface({ selectedModel, selectedProvider, currentThreadId, onThreadCreated }: ChatInterfaceProps) {
+export function ChatInterface({ 
+  selectedModel, 
+  selectedProvider, 
+  currentThreadId, 
+  onThreadCreated,
+  onModelChange,
+  onProviderChange
+}: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [threadId, setThreadId] = useState<string | undefined>(currentThreadId);
   const [apiKeys, setApiKeys] = useState<any[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // Get auth token from localStorage
   const getAuthToken = () => localStorage.getItem('authToken');
 
-  // Check if user has API key for selected provider and model
   const currentApiKey = apiKeys.find(key => 
     key.provider === selectedProvider && key.model_name === selectedModel
   );
@@ -51,12 +62,11 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
     scrollToBottom();
   }, [messages]);
 
-  // Load API keys on mount
   useEffect(() => {
     loadApiKeys();
+    loadProvidersAndModels();
   }, []);
 
-  // Load thread messages when threadId changes
   useEffect(() => {
     if (currentThreadId && currentThreadId !== threadId) {
       setThreadId(currentThreadId);
@@ -81,6 +91,19 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
       }
     } catch (error) {
       console.error('Failed to load API keys:', error);
+    }
+  };
+
+  const loadProvidersAndModels = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/providers-and-models`);
+      if (response.ok) {
+        const data = await response.json();
+        setProviders(data.providers);
+        setModelsByProvider(data.models_by_provider);
+      }
+    } catch (error) {
+      console.error('Failed to load providers and models:', error);
     }
   };
 
@@ -110,10 +133,7 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-
+  const sendMessage = async (messageContent: string, provider?: string, model?: string) => {
     const token = getAuthToken();
     if (!token) {
       toast({ 
@@ -124,10 +144,17 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
       return;
     }
 
-    if (!currentApiKey) {
+    const useProvider = provider || selectedProvider;
+    const useModel = model || selectedModel;
+
+    const keyForModel = apiKeys.find(key => 
+      key.provider === useProvider && key.model_name === useModel
+    );
+
+    if (!keyForModel) {
       toast({ 
         title: "API Key Required", 
-        description: `Please add an API key for ${selectedProvider} ${selectedModel} to continue.`,
+        description: `Please add an API key for ${useProvider} ${useModel} to continue.`,
         variant: "destructive"
       });
       return;
@@ -136,21 +163,21 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim(),
+      content: messageContent,
       timestamp: new Date(),
     };
 
     setMessages(prev => [...prev, userMessage]);
-    setInput("");
     setIsLoading(true);
 
-    // Create streaming assistant message
     const assistantMessage: Message = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
       content: "",
       timestamp: new Date(),
       isStreaming: true,
+      model: useModel,
+      provider: useProvider,
     };
 
     setMessages(prev => [...prev, assistantMessage]);
@@ -163,10 +190,10 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: userMessage.content,
+          message: messageContent,
           thread_id: threadId,
-          provider: selectedProvider,
-          model_name: selectedModel,
+          provider: useProvider,
+          model_name: useModel,
           stream: true,
         }),
       });
@@ -233,10 +260,47 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
         variant: "destructive"
       });
       
-      // Remove the failed assistant message
       setMessages(prev => prev.filter(msg => msg.id !== assistantMessage.id));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    const messageContent = input.trim();
+    setInput("");
+    await sendMessage(messageContent);
+  };
+
+  const handleRetry = async (messageIndex: number) => {
+    const messageToRetry = messages[messageIndex - 1]; // Get the user message before the assistant message
+    if (messageToRetry && messageToRetry.role === 'user') {
+      // Remove the failed assistant message and retry
+      setMessages(prev => prev.slice(0, messageIndex));
+      await sendMessage(messageToRetry.content);
+    }
+  };
+
+  const handleRetryWithDifferentModel = async (messageIndex: number) => {
+    const messageToRetry = messages[messageIndex - 1];
+    if (messageToRetry && messageToRetry.role === 'user') {
+      // Find a different model
+      const availableModels = modelsByProvider[selectedProvider] || [];
+      const otherModel = availableModels.find(model => model !== selectedModel);
+      
+      if (otherModel) {
+        setMessages(prev => prev.slice(0, messageIndex));
+        await sendMessage(messageToRetry.content, selectedProvider, otherModel);
+      } else {
+        toast({
+          title: "No Alternative Model",
+          description: "No other models available for this provider.",
+          variant: "destructive"
+        });
+      }
     }
   };
 
@@ -248,7 +312,7 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
   };
 
   return (
-    <div className="flex flex-col h-full max-h-screen">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="flex-shrink-0 p-4 border-b border-slate-700/50 bg-slate-900/30 backdrop-blur-sm">
         <div className="flex items-center justify-between">
@@ -277,7 +341,7 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
         </div>
       </div>
 
-      {/* Messages Area with proper scrolling */}
+      {/* Messages Area */}
       <div className="flex-1 min-h-0">
         <ScrollArea className="h-full">
           <div className="p-6">
@@ -299,7 +363,7 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
               </div>
             ) : (
               <div className="space-y-6">
-                {messages.map((message) => (
+                {messages.map((message, index) => (
                   <ChatMessage 
                     key={message.id} 
                     message={message}
@@ -310,6 +374,9 @@ export function ChatInterface({ selectedModel, selectedProvider, currentThreadId
                     onFeedback={(type) => {
                       toast({ title: `Feedback recorded: ${type}` });
                     }}
+                    onRetry={message.role === 'assistant' ? () => handleRetry(index) : undefined}
+                    onRetryWithDifferentModel={message.role === 'assistant' ? () => handleRetryWithDifferentModel(index) : undefined}
+                    isLoading={isLoading && message.isStreaming}
                   />
                 ))}
                 <div ref={messagesEndRef} />

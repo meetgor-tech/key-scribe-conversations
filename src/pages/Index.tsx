@@ -14,6 +14,7 @@ const Index = () => {
   const [selectedProvider, setSelectedProvider] = useState('openai');
   const [currentThreadId, setCurrentThreadId] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const API_BASE_URL = "http://localhost:8000";
 
@@ -80,7 +81,7 @@ const Index = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         <div className="text-white">Loading...</div>
       </div>
     );
@@ -92,7 +93,7 @@ const Index = () => {
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <div className="h-screen flex w-full bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 overflow-hidden">
         <Sidebar 
           activeView={activeView}
           onViewChange={setActiveView}
@@ -104,6 +105,8 @@ const Index = () => {
           onNewChat={handleNewChat}
           onLogout={handleLogout}
           currentUser={currentUser}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
         
         <main className="flex-1 flex flex-col overflow-hidden">
@@ -113,6 +116,8 @@ const Index = () => {
               selectedProvider={selectedProvider}
               currentThreadId={currentThreadId}
               onThreadCreated={handleThreadCreated}
+              onModelChange={setSelectedModel}
+              onProviderChange={setSelectedProvider}
             />
           ) : (
             <ApiKeyManager />
